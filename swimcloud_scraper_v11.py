@@ -1,5 +1,4 @@
-# Based on v11, modified to save meets as named tabs in excel
-# Can handle data output for multiple meets in one file
+# Based on v12, dynamic output filename from team name
 
 
 import requests
@@ -23,10 +22,43 @@ class SwimCloudScraper:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+        self.team_name = None
     
     def _delay_request(self):
         """Add delay between requests to be respectful to the server."""
         time.sleep(self.delay)
+    
+    def get_team_name(self, team_id):
+        """
+        Get the team name from the team page.
+        
+        Args:
+            team_id: The team ID (e.g., 185)
+        
+        Returns:
+            String with team name
+        """
+        url = f"{self.base_url}/team/{team_id}/results/?page=1&name=&meettype=&season=28"
+        print(f"Fetching team name from: {url}")
+        
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Look for h1 with class c-toolbar__title
+            team_name_tag = soup.find('h1', class_='c-toolbar__title')
+            if team_name_tag:
+                team_name = team_name_tag.get_text(strip=True)
+                print(f"Found team name: {team_name}")
+                return team_name
+            else:
+                print("WARNING: Could not find team name")
+                return f"Team_{team_id}"
+        
+        except Exception as e:
+            print(f"Error fetching team name: {e}")
+            return f"Team_{team_id}"
     
     def get_team_meets(self, team_id, max_meets=None):
         """
@@ -238,14 +270,14 @@ class SwimCloudScraper:
             traceback.print_exc()
             return {'event_name': event_name, 'is_relay': False, 'results': []}
     
-    def scrape_team_results(self, team_id, max_meets=None, output_file='results.csv'):
+    def scrape_team_results(self, team_id, max_meets=None, output_file=None):
         """
         Scrape all results for a team and save to CSV.
         
         Args:
             team_id: The team ID
             max_meets: Maximum number of meets to scrape (None for all)
-            output_file: Output CSV filename
+            output_file: Output Excel filename (None to auto-generate from team name)
         
         Returns:
             DataFrame with all results
@@ -255,6 +287,18 @@ class SwimCloudScraper:
         print(f"Max meets: {max_meets if max_meets else 'All'}")
         print(f"{'='*70}\n")
         
+        # Get team name
+        self.team_name = self.get_team_name(team_id)
+        
+        # Generate output filename from team name if not provided
+        if output_file is None:
+            # Clean team name for filename (remove special characters)
+            clean_name = re.sub(r'[^\w\s-]', '', self.team_name)
+            clean_name = re.sub(r'[-\s]+', '_', clean_name)
+            output_file = f'{clean_name}.xlsx'
+        
+        print(f"Output file: {output_file}\n")
+        
         df = pd.DataFrame()
         
         # Get all meets for the team
@@ -263,6 +307,10 @@ class SwimCloudScraper:
         if not meet_urls:
             print("\n❌ No meets found. Please check the team ID or page structure.")
             return pd.DataFrame()
+        
+        # Create a new workbook
+        with pd.ExcelWriter(output_file) as writer:
+            df.to_excel(writer, index=False)
         
         for meet_idx, meet_url in enumerate(meet_urls, 1):
             all_results = []
@@ -320,6 +368,7 @@ class SwimCloudScraper:
 
         print(f"\n{'='*70}")
         print(f"✅ Scraping complete!")
+        print(f"   Team: {self.team_name}")
         print(f"   Saved {len(df)} results to {output_file}")
         print(f"   Meets processed: {df['meet_name'].nunique()}")
         print(f"   Unique events: {df['event_name'].nunique()}")
@@ -332,32 +381,20 @@ class SwimCloudScraper:
 
 # Example usage
 if __name__ == "__main__":
-
-    # File to save results to
-    output_filename = 'swimcloud_results.xlsx'
-
-    # Empty dataframes to start
-    df_empty = pd.DataFrame()
-
-    # Create a new workbook and close it immediately for future writing
-    with pd.ExcelWriter(output_filename) as writer:
-        df_empty.to_excel(writer, index=False)
-
     # Initialize scraper with 1 second delay between requests
     scraper = SwimCloudScraper(delay=1.0)
     
-    # Scrape results for team 185, limiting to 2 meets for testing
+    # Scrape results for team 5245, limiting to 2 meets for testing
     # Remove or increase max_meets for production use
+    # output_file will be auto-generated from team name
     results_df = scraper.scrape_team_results(
         team_id=5245,
         max_meets=2,  # Set to None to scrape all meets
-        output_file=output_filename
+        output_file=None  # Set to None to auto-generate filename from team name
     )
     
     # Display sample of results
     if not results_df.empty:
-        # print("\n📊 Sample of results:")
-        # print(results_df.head(10).to_string())
         print(f"\n📈 Summary:")
         print(f"   Total results: {len(results_df)}")
         print(f"   Meets: {results_df['meet_name'].nunique()}")
