@@ -1,4 +1,5 @@
-# Based on v11, modified to save meet as a named tab in excel
+# Based on v11, modified to save meets as named tabs in excel
+# Can handle data output for multiple meets in one file
 
 
 import requests
@@ -254,7 +255,7 @@ class SwimCloudScraper:
         print(f"Max meets: {max_meets if max_meets else 'All'}")
         print(f"{'='*70}\n")
         
-        all_results = []
+        df = pd.DataFrame()
         
         # Get all meets for the team
         meet_urls = self.get_team_meets(team_id, max_meets)
@@ -264,6 +265,7 @@ class SwimCloudScraper:
             return pd.DataFrame()
         
         for meet_idx, meet_url in enumerate(meet_urls, 1):
+            all_results = []
             print(f"\n{'─'*70}")
             print(f"Processing Meet {meet_idx}/{len(meet_urls)}")
             print(f"{'─'*70}")
@@ -299,30 +301,48 @@ class SwimCloudScraper:
                     })
                 
                 print(f"      Added {len(results)} results")
-        
-        # Create DataFrame and save to Excel
-        df = pd.DataFrame(all_results)
-        if not df.empty:
-            # Truncate string for sheet name compatibility
-            trunc_meet_name = df['meet_name'].apply(lambda x: x[:31] if len(x) > 31 else x)
-            with pd.ExcelWriter(output_file) as writer:
-                df.to_excel(writer, sheet_name=trunc_meet_name.iloc[0], index=False)
-            print(f"\n{'='*70}")
-            print(f"✅ Scraping complete!")
-            print(f"   Saved {len(df)} results to {output_file}")
-            print(f"   Meets processed: {df['meet_name'].nunique()}")
-            print(f"   Unique events: {df['event_name'].nunique()}")
-            print(f"   Relay results: {df['is_relay'].sum()}")
-            print(f"   Individual results: {(~df['is_relay']).sum()}")
-            print(f"{'='*70}\n")
-        else:
-            print("\n❌ No results found.")
+            print(f"{'─'*70}\nCompleted Meet: {meet_name}\n{'─'*70}")
+
+            # Create DataFrame for this meet and append to Excel
+            df_meet = pd.DataFrame(all_results)
+            if not df_meet.empty:
+                # Truncate string for sheet name compatibility
+                trunc_meet_name = df_meet['meet_name'].apply(lambda x: x[:31] if len(x) > 31 else x)
+                # Append meet data to existing Excel file as new sheets
+                with pd.ExcelWriter(output_file, mode='a') as writer:
+                    df_meet.to_excel(writer, sheet_name=trunc_meet_name.iloc[0], index=False)
+                print(f"\n{'='*70}")
+                print(f"✅ Saved {len(df_meet)} results for meet '{trunc_meet_name.iloc[0]}' to {output_file}")
+                print(f"{'='*70}\n")
+                df = pd.concat([df, df_meet], ignore_index=True)
+            else:
+                print(f"\n❌ No results found for meet '{meet_name}'.\n")
+
+        print(f"\n{'='*70}")
+        print(f"✅ Scraping complete!")
+        print(f"   Saved {len(df)} results to {output_file}")
+        print(f"   Meets processed: {df['meet_name'].nunique()}")
+        print(f"   Unique events: {df['event_name'].nunique()}")
+        print(f"   Relay results: {df['is_relay'].sum()}")
+        print(f"   Individual results: {(~df['is_relay']).sum()}")
+        print(f"{'='*70}\n")
         
         return df
 
 
 # Example usage
 if __name__ == "__main__":
+
+    # File to save results to
+    output_filename = 'swimcloud_results.xlsx'
+
+    # Empty dataframes to start
+    df_empty = pd.DataFrame()
+
+    # Create a new workbook and close it immediately for future writing
+    with pd.ExcelWriter(output_filename) as writer:
+        df_empty.to_excel(writer, index=False)
+
     # Initialize scraper with 1 second delay between requests
     scraper = SwimCloudScraper(delay=1.0)
     
@@ -330,14 +350,14 @@ if __name__ == "__main__":
     # Remove or increase max_meets for production use
     results_df = scraper.scrape_team_results(
         team_id=5245,
-        max_meets=1,  # Set to None to scrape all meets
-        output_file='swimcloud_results.xlsx'
+        max_meets=2,  # Set to None to scrape all meets
+        output_file=output_filename
     )
     
     # Display sample of results
     if not results_df.empty:
-        print("\n📊 Sample of results:")
-        print(results_df.head(10).to_string())
+        # print("\n📊 Sample of results:")
+        # print(results_df.head(10).to_string())
         print(f"\n📈 Summary:")
         print(f"   Total results: {len(results_df)}")
         print(f"   Meets: {results_df['meet_name'].nunique()}")
