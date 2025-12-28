@@ -1,18 +1,12 @@
 # Based on v12, dynamic output filename from team name
 
-# Needs rate limiting to avoid temp bans
+# Added rate limiting to avoid temp bans
 # Issue with headless mode where it isn't seeing the tables on the page without the physical page opening
-# Or I just suck at trying to maneuver the webdriver
+# Issue where individual events are not parsed correctly, but relays are working fine
 
 # Combined Brandon and John's changes
 
-# Suppress warnings, because this definitely won't go badly wrong
-# "fixed" by downgrading urllib3 to 1.26.15 from 2.5.0
-# import warnings
-# from urllib3.exceptions import NotOpenSSLWarning
-# warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
-
-# Import everything else
+# Import everything needed
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 import requests
@@ -215,12 +209,15 @@ class SwimCloudScraper:
             traceback.print_exc()
             return "Unknown Meet", []
 
-    def scrape_split_times(self, time_url):
+    def scrape_split_times(self, time_url, delay):
         driver = webdriver.Chrome()
+        time.sleep(delay)  # Wait before loading page
         driver.get(time_url)
-
+        time.sleep(delay)  # Wait for page to load
         html = driver.page_source
         soup = BeautifulSoup(html, "html.parser")
+
+        time.sleep(delay)  # Wait for JavaScript to load content
 
         table = soup.select_one("table.c-table-clean")
 
@@ -283,7 +280,7 @@ class SwimCloudScraper:
                 # Now find the corresponding athlete/team name
                 # Look for the nearest td with class="u-nowrap u-text-semi" that has a swimmer link
                 # We need to traverse up and find the row, then look for the name
-                self.scrape_split_times(time_url)
+                self.scrape_split_times(time_url, delay=self.delay)
                 # Find the parent table row
                 row = time_div.find_parent('tr')
                 name = "Unknown"
