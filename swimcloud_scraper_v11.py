@@ -1,6 +1,20 @@
 # Based on v12, dynamic output filename from team name
 
+# Needs rate limiting to avoid temp bans
+# Issue with headless mode where it isn't seeing the tables on the page without the physical page opening
+# Or I just suck at trying to maneuver the webdriver
+
+# Combined Brandon and John's changes
+
+# Suppress warnings, because this definitely won't go badly wrong
+# "fixed" by downgrading urllib3 to 1.26.15 from 2.5.0
+# import warnings
+# from urllib3.exceptions import NotOpenSSLWarning
+# warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+
+# Import everything else
 from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -23,6 +37,16 @@ class SwimCloudScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         self.team_name = None
+
+        ## JN- changing selenium chrome to headless
+        self._init_selenium()
+
+    def _init_selenium(self):
+        """Initialize Selenium with headless Chrome. Disable if you want to see for debugging porpoises"""
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        self.driver = webdriver.Chrome(options=chrome_options)
+        print("Initializing headless Chrome for Selenium...")
     
     def _delay_request(self):
         """Add delay between requests to be respectful to the server."""
