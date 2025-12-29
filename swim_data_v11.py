@@ -1,6 +1,6 @@
-# Based on v12, dynamic output filename from team name
+# Based on v12
 
-# Added rate limiting to avoid temp bans
+# Added rate limiting
 # Issue with headless mode where it isn't seeing the tables on the page without the physical page opening
 # Issue where individual events are not parsed correctly, but relays are working fine
 
@@ -15,9 +15,10 @@ import time
 import pandas as pd
 from urllib.parse import urljoin
 import re
+import random
 
 class SwimCloudScraper:
-    def __init__(self, delay=1.0):
+    def __init__(self, delay=1.0, rand_delay_min=8, rand_delay_max=14):
         """
         Initialize the scraper with a delay between requests.
         
@@ -26,6 +27,8 @@ class SwimCloudScraper:
         """
         self.base_url = "https://www.swimcloud.com"
         self.delay = delay
+        self.rand_delay_min = rand_delay_min
+        self.rand_delay_max = rand_delay_max
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -212,6 +215,7 @@ class SwimCloudScraper:
     def scrape_split_times(self, time_url):
 
         try:
+            time.sleep(random.randint(self.rand_delay_min, self.rand_delay_max)) # I am a human being, not a robot
             driver = webdriver.Chrome()
             time.sleep(self.delay)  # Wait before loading page
             driver.get(time_url)
@@ -489,7 +493,7 @@ if __name__ == "__main__":
     test_mode = True
 
     # Initialize scraper with 1 second delay between requests
-    scraper = SwimCloudScraper(delay=1.0)
+    scraper = SwimCloudScraper(delay=1.0, rand_delay_min=8, rand_delay_max=14)
     
     # Scrape results for team 5245, limiting to 2 meets for testing
     # Remove or increase max_meets for production use
