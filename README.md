@@ -19,3 +19,10 @@ Need to update/fix:
   --different logic relay vs individual event for split handling?
   --ensure compatibility with parsing relay events with > 4 splits (400 yard = 8 splits for 4 swimmers, 800 yard = 16 splits for 4 swimmers)
   be nice to host site to avoid rate limiting...we want to be doing ethical scraping :)
+
+
+  # SwimMeetResults
+This is the current link that works with the new file: swim_meet_data.py
+https://swimmeetresults.tech/NCAA-Division-I-Men-2025/250326lastevt.htm
+
+I assume that the parsing for the other events will not work flawlessly.

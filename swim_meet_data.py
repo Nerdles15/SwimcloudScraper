@@ -1,4 +1,4 @@
-# Based on v12
+# Based on v12 This version is 1.0.0.0 (john increment this if you make changes :))
 
 # Added rate limiting
 # Issue with headless mode where it isn't seeing the tables on the page without the physical page opening
@@ -18,6 +18,7 @@ import re
 import random
 from selenium.webdriver.common.by import By
 import time
+
 
 class SwimCloudScraper:
     def __init__(self, delay=1.0, rand_delay_min=8, rand_delay_max=14):
@@ -47,10 +48,6 @@ class SwimCloudScraper:
         self.driver = webdriver.Chrome(options=chrome_options)
         print("Initializing headless Chrome for Selenium...")
 
-    def _delay_request(self):
-        """Add delay between requests to be respectful to the server."""
-        time.sleep(self.delay)
-
     def find_all_available_sessions(self, url):
         """
         Find all available session links (files with .htm extension) on a meet page.
@@ -59,12 +56,7 @@ class SwimCloudScraper:
             url: The URL of the meet index page
 
         Returns:
-            list: List of dictionaries containing session info with keys:
-                  - 'event_number': Event number (e.g., '1', '3', '112')
-                  - 'event_name': Event name (e.g., 'Men 200 Medley Relay')
-                  - 'session_type': 'Prelims', 'Finals', 'Swim-off', or None
-                  - 'href': The .htm filename
-                  - 'full_url': Complete URL to the event page
+            list: List of dictionaries containing session info
         """
         self.driver.get(url)
         time.sleep(self.delay)
@@ -113,6 +105,15 @@ class SwimCloudScraper:
         print(f"Found {len(sessions)} event sessions")
         return sessions
 
+    def _extract_meet_name(self, page_text):
+        """Extract meet name from page text."""
+        lines = page_text.strip().split('\n')
+        for i, line in enumerate(lines):
+            if 'Championship' in line or 'Meet' in line:
+                # Often the meet name is in the first few lines
+                return line.strip()
+        return "Unknown Meet"
+
     def _extract_event_info(self, page_text):
         """
         Extract event number and name from page text.
@@ -130,10 +131,25 @@ class SwimCloudScraper:
 
         return None, None, False
 
+    def _determine_relay_distances(self, event_name):
+        """
+        Determine the distances for each leg based on relay type.
+        Returns list of distances (e.g., [50, 100, 150, 200] for 200 relay)
+        """
+        if '200' in event_name and 'Relay' in event_name:
+            return [50, 100, 150, 200]
+        elif '400' in event_name and 'Relay' in event_name:
+            return [100, 200, 300, 400]
+        elif '800' in event_name and 'Relay' in event_name:
+            return [200, 400, 600, 800]
+        else:
+            # Default to 4 legs with unknown distances
+            return [1, 2, 3, 4]
+
     def _parse_relay_results(self, page_text, meet_name, meet_url, event_number, event_name):
         """
-        Parse relay event results from page text.
-        Returns: list of dictionaries with result data
+        Parse relay event results from page text with individual swimmer splits.
+        Returns: list of dictionaries with detailed split data
         """
         results = []
 
@@ -147,7 +163,7 @@ class SwimCloudScraper:
                 result_start = i + 1
                 break
 
-        # Parse each result
+        # Parse each team result
         i = result_start
         while i < len(lines):
             line = lines[i].strip()
@@ -155,28 +171,140 @@ class SwimCloudScraper:
             # Check if this is a result line (starts with rank number)
             rank_match = re.match(r'^\s*(\d+)\s+', line)
             if rank_match:
-                # Extract team name and time from this line
-                # Pattern: rank, team name, seed time, finals time, points
-                parts = re.split(r'\s{2,}', line.strip())
+                swimmers = []  # List of (order, name) tuples
+                splits_lines = []
 
-                if len(parts) >= 4:
-                    team_name = parts[1]
-                    finals_time = parts[3]
+                # Move to next line to start looking for swimmers
+                i += 1
 
-                    # Clean up time (remove any letters like 'N', 'A', etc.)
-                    finals_time = re.sub(r'[A-Z]', '', finals_time).strip()
+                # Next lines contain swimmer names
+                # Pattern: "1) Caribe, Guilherme JR          2) r:0.23 Taylor, Lamar 5Y"
+                while i < len(lines):
+                    next_line = lines[i].strip()
+                    # Swimmer lines start with numbers followed by )
+                    if re.match(r'^\d+\)', next_line):
+                        # Parse all swimmers in this line
+                        # Split by pattern of digit followed by )
+                        parts = re.split(r'(?=\d+\))', next_line)
 
-                    results.append({
-                        'meet_name': meet_name,
-                        'meet_url': meet_url,
-                        'event_number': event_number,
-                        'event_name': event_name,
-                        'is_relay': True,
-                        'name': team_name,
-                        'time': finals_time
-                    })
+                        for part in parts:
+                            part = part.strip()
+                            if not part:
+                                continue
 
-            i += 1
+                            # Extract order number and name
+                            # Pattern: "1) Caribe, Guilherme JR" or "2) r:0.23 Taylor, Lamar 5Y"
+                            match = re.match(r'(\d+)\)\s*(?:r:[\d.+-]+\s*)?(.+)', part)
+                            if match:
+                                order = int(match.group(1))
+                                name = match.group(2).strip()
+                                swimmers.append((order, name))
+                        i += 1
+                    else:
+                        break
+
+                # Find the splits lines (contains the actual split times)
+                # Lines start with "r:" or just have times
+                while i < len(lines):
+                    next_line = lines[i].strip()
+                    if next_line.startswith('r:') or re.match(r'^\d+\.\d+', next_line):
+                        splits_lines.append(next_line)
+                        i += 1
+                        # Continue reading lines that look like splits
+                        while i < len(lines):
+                            cont_line = lines[i].strip()
+                            # Check if this is a continuation of splits (has time patterns)
+                            if re.search(r'\d+:\d+\.\d+|\d+\.\d+', cont_line) and not re.match(r'^\d+\s+\S', cont_line):
+                                splits_lines.append(cont_line)
+                                i += 1
+                            else:
+                                break
+                        break
+                    i += 1
+
+                # Combine all split lines into one string
+                splits_text = ' '.join(splits_lines)
+
+                # Parse splits from the combined splits text
+                if splits_text and swimmers:
+                    # Extract all time values
+                    time_pattern = r'(\d+:\d+\.\d+|\d+\.\d+)'
+                    all_times = re.findall(time_pattern, splits_text)
+
+                    # Pattern explanation for 400 relay:
+                    # r:+0.58  19.28  40.57 (40.57)  59.68 (19.11)  1:21.59 (41.02)  1:40.95 (19.36)  2:02.94 (41.35)  2:21.29 (18.35)  2:42.30 (39.36)
+                    #
+                    # Times in order: [0.58, 19.28, 40.57, 40.57, 59.68, 19.11, 1:21.59, 41.02, 1:40.95, 19.36, 2:02.94, 41.35, 2:21.29, 18.35, 2:42.30, 39.36]
+                    #
+                    # Leg 1: split=19.28 (idx 1), leg=40.57 (idx 2), cumulative=40.57 (idx 3)
+                    # Leg 2: split=19.11 (idx 5), leg=41.02 (idx 7), cumulative=1:21.59 (idx 6)
+                    # Leg 3: split=19.36 (idx 9), leg=41.35 (idx 11), cumulative=2:02.94 (idx 10)
+                    # Leg 4: split=18.35 (idx 13), leg=39.36 (idx 15), cumulative=2:42.30 (idx 14)
+
+                    leg_data = []
+                    times_idx = 0
+
+                    # Skip reaction time if present (r:+0.58 becomes 0.58)
+                    if times_idx < len(all_times) and float(all_times[times_idx]) < 1.0:
+                        times_idx += 1
+
+                    # First leg: split, leg, cumulative (cumulative appears twice)
+                    if times_idx + 2 < len(all_times):
+                        split_time = all_times[times_idx]  # 19.28
+                        leg_time = all_times[times_idx + 1]  # 40.57
+                        cumulative = all_times[times_idx + 2]  # 40.57 (duplicate)
+                        leg_data.append((split_time, leg_time, cumulative))
+                        times_idx += 3
+
+                    # Remaining legs follow pattern:
+                    # intermediate_cumulative, split, cumulative, leg
+                    # We want: split, leg, cumulative
+                    while times_idx < len(all_times) and len(leg_data) < len(swimmers):
+                        # Skip intermediate cumulative (e.g., 59.68)
+                        times_idx += 1
+
+                        if times_idx >= len(all_times):
+                            break
+
+                        # Get split time (e.g., 19.11)
+                        split_time = all_times[times_idx]
+                        times_idx += 1
+
+                        if times_idx >= len(all_times):
+                            break
+
+                        # Get cumulative time (e.g., 1:21.59)
+                        cumulative = all_times[times_idx]
+                        times_idx += 1
+
+                        if times_idx >= len(all_times):
+                            break
+
+                        # Get leg time (e.g., 41.02)
+                        leg_time = all_times[times_idx]
+                        times_idx += 1
+
+                        leg_data.append((split_time, leg_time, cumulative))
+
+                    # Create a result entry for each swimmer
+                    for idx, (order, name) in enumerate(swimmers):
+                        if idx < len(leg_data):
+                            split_time, leg_time, cumulative = leg_data[idx]
+
+                            results.append({
+                                'meet_name': meet_name,
+                                'meet_url': meet_url,
+                                'event_number': event_number,
+                                'event_name': event_name,
+                                'is_relay': True,
+                                'Name': name,
+                                'Order': order,
+                                'Split': split_time,
+                                'Leg': leg_time,
+                                'Cumulative': cumulative
+                            })
+            else:
+                i += 1
 
         return results
 
@@ -205,39 +333,46 @@ class SwimCloudScraper:
             # Check if this is a result line (starts with rank number)
             rank_match = re.match(r'^\s*(\d+)\s+', line)
             if rank_match:
-                # Pattern for individual: rank, name, year, school, seed, finals, points
-                # This is more complex and may need adjustment based on actual format
-                parts = re.split(r'\s{2,}', line.strip())
+                parts = line.split()
 
                 if len(parts) >= 3:
-                    # Extract swimmer name (usually second element)
-                    swimmer_name = parts[1]
+                    # Extract swimmer name
+                    swimmer_name = None
+                    for j in range(1, len(parts)):
+                        if ',' in parts[j]:
+                            # Name format is usually "Last, First"
+                            swimmer_name = parts[j]
+                            # Check if next part is part of name
+                            if j + 1 < len(parts) and not parts[j + 1][0].isupper() or len(parts[j + 1]) <= 3:
+                                swimmer_name += ' ' + parts[j + 1]
+                            break
 
-                    # Find the finals time (look for time pattern like 1:23.45)
+                    # Find the finals time
                     time_pattern = r'\d+:\d+\.\d+|\d+\.\d+'
                     finals_time = None
 
-                    for part in parts:
-                        if re.search(time_pattern, part):
-                            # This might be the finals time
-                            # Usually it's one of the later columns
-                            finals_time = re.search(time_pattern, part).group()
+                    for part in reversed(parts):
+                        if re.match(time_pattern, part):
+                            finals_time = re.sub(r'[A-Z]', '', part)
+                            break
 
-                    if finals_time:
+                    if swimmer_name and finals_time:
                         results.append({
                             'meet_name': meet_name,
                             'meet_url': meet_url,
                             'event_number': event_number,
                             'event_name': event_name,
                             'is_relay': False,
-                            'name': swimmer_name,
-                            'time': finals_time
+                            'Name': swimmer_name,
+                            'Order': None,
+                            'Split': None,
+                            'Leg': None,
+                            'Cumulative': finals_time
                         })
 
             i += 1
 
         return results
-
     def parse_event_page(self, url, meet_name=None, meet_url=None):
         """
         Parse an event results page and extract all relevant data.
@@ -249,7 +384,7 @@ class SwimCloudScraper:
 
         Returns:
             pandas.DataFrame: DataFrame with columns [meet_name, meet_url, event_number,
-                             event_name, is_relay, name, time]
+                             event_name, is_relay, Name, Distance, Split, Leg, Cumulative]
         """
         print(f"Parsing event page: {url}")
 
@@ -346,6 +481,8 @@ class SwimCloudScraper:
 
             except Exception as e:
                 print(f"Error parsing {session['full_url']}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
         # Combine all results
@@ -368,41 +505,27 @@ class SwimCloudScraper:
             self.driver.quit()
 
 
-# Example usage
 if __name__ == "__main__":
-    test_mode = True
-
-try:
-    # Initialize scraper with 1 second delay between requests
+    # Initialize scraper
     scraper = SwimCloudScraper(delay=1.0, rand_delay_min=8, rand_delay_max=14)
 
-    # Example URL - replace with your actual meet page URL
-    meet_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/evtindex.htm"
+    try:
+        # Example: Parse a single event
+        event_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/250326lastevt.htm"
+        df = scraper.parse_event_page(event_url,
+                                      meet_name="2025 NCAA Division I Men's Swimming & Diving",
+                                      meet_url="https://swimmeetresults.tech/NCAA-Division-I-Men-2025/")
 
-    # sessions = scraper.find_all_available_sessions(meet_url)
+        print("\nResults preview:")
+        print(df.to_string())
 
-    # Print results
-    # for session in sessions:
-    #     print(f"Event #{session['event_number']}: {session['event_name']}")
-    #     print(f"  Type: {session['session_type']}")
-    #     print(f"  File: {session['href']}")
-    #     print(f"  URL: {session['full_url']}")
-    #     print()
-    # Example: Parse a single event
-    event_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/250326lastevt.htm"
-    df = scraper.parse_event_page(event_url,
-                                  meet_name="2025 NCAA Division I Men's Swimming & Diving",
-                                  meet_url="https://swimmeetresults.tech/NCAA-Division-I-Men-2025/")
+        # Save single event
+        df.to_excel('output_stuff\\single_event_results.xlsx', sheet_name='Event Results', index=False)
+        print("\nSaved to output_stuff\\single_event_results.xlsx")
 
-    print("\nResults preview:")
-    print(df.head())
+        # This should find all the meets that we can scrape. We will have to loop through it to scrape everything.
+        # index_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/index.htm"
+        # full_results = scraper.scrape_entire_meet(index_url, output_file='ncaa_meet_results.xlsx')
 
-    # Save single event
-    df.to_excel('single_event_results.xlsx', sheet_name='Event Results', index=False)
-
-    # Example: Scrape entire meet
-    # index_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/index.htm"
-    # full_results = scraper.scrape_entire_meet(index_url, output_file='ncaa_meet_results.xlsx')
-
-finally:
-    scraper.close()
+    finally:
+        scraper.close()
