@@ -171,8 +171,27 @@ class SwimCloudScraper:
             # Check if this is a result line (starts with rank number)
             rank_match = re.match(r'^\s*(\d+)\s+', line)
             if rank_match:
+                team_name = None
                 swimmers = []  # List of (order, name) tuples
                 splits_lines = []
+
+                # Extract team name from the first line
+                # Pattern: "1 Tennessee    2:42.41    2:42.30N  40"
+                # Team name is between rank and the first time (contains colon or multiple digits)
+                parts = line.split()
+                if len(parts) >= 2:
+                    # Find where the times start (they contain colons or are seed/finals times)
+                    team_parts = []
+                    for j, part in enumerate(parts[1:], 1):
+                        # Check if this looks like a time (has colon or is a number with decimal and letters)
+                        if ':' in part or re.match(r'^\d+\.\d+[A-Z]*$', part):
+                            # Everything before this is the team name
+                            team_name = ' '.join(parts[1:j])
+                            break
+
+                    # If we didn't find a time pattern, team name might be just the second element
+                    if not team_name and len(parts) > 1:
+                        team_name = parts[1]
 
                 # Move to next line to start looking for swimmers
                 i += 1
@@ -231,16 +250,6 @@ class SwimCloudScraper:
                     time_pattern = r'(\d+:\d+\.\d+|\d+\.\d+)'
                     all_times = re.findall(time_pattern, splits_text)
 
-                    # Pattern explanation for 400 relay:
-                    # r:+0.58  19.28  40.57 (40.57)  59.68 (19.11)  1:21.59 (41.02)  1:40.95 (19.36)  2:02.94 (41.35)  2:21.29 (18.35)  2:42.30 (39.36)
-                    #
-                    # Times in order: [0.58, 19.28, 40.57, 40.57, 59.68, 19.11, 1:21.59, 41.02, 1:40.95, 19.36, 2:02.94, 41.35, 2:21.29, 18.35, 2:42.30, 39.36]
-                    #
-                    # Leg 1: split=19.28 (idx 1), leg=40.57 (idx 2), cumulative=40.57 (idx 3)
-                    # Leg 2: split=19.11 (idx 5), leg=41.02 (idx 7), cumulative=1:21.59 (idx 6)
-                    # Leg 3: split=19.36 (idx 9), leg=41.35 (idx 11), cumulative=2:02.94 (idx 10)
-                    # Leg 4: split=18.35 (idx 13), leg=39.36 (idx 15), cumulative=2:42.30 (idx 14)
-
                     leg_data = []
                     times_idx = 0
 
@@ -297,6 +306,7 @@ class SwimCloudScraper:
                                 'event_number': event_number,
                                 'event_name': event_name,
                                 'is_relay': True,
+                                'Team Name': team_name,
                                 'Name': name,
                                 'Order': order,
                                 'Split': split_time,
@@ -343,7 +353,7 @@ class SwimCloudScraper:
                             # Name format is usually "Last, First"
                             swimmer_name = parts[j]
                             # Check if next part is part of name
-                            if j + 1 < len(parts) and not parts[j + 1][0].isupper() or len(parts[j + 1]) <= 3:
+                            if j + 1 < len(parts) and (not parts[j + 1][0].isupper() or len(parts[j + 1]) <= 3):
                                 swimmer_name += ' ' + parts[j + 1]
                             break
 
@@ -363,6 +373,7 @@ class SwimCloudScraper:
                             'event_number': event_number,
                             'event_name': event_name,
                             'is_relay': False,
+                            'Team Name': None,
                             'Name': swimmer_name,
                             'Order': None,
                             'Split': None,
