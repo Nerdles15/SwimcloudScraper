@@ -1,10 +1,14 @@
-# Based on v12 This version is 1.0.0.0 (john increment this if you make changes :))
+# Based on v12 This version is 1.0.0.1 (john increment this if you make changes :)) (Oh I will -john)
 
-# Added rate limiting
-# Issue with headless mode where it isn't seeing the tables on the page without the physical page opening
-# Issue where individual events are not parsed correctly, but relays are working fine
-
-# Combined Brandon and John's changes
+#===================#
+# This version is:  #
+#                   #
+#  0.1.1.0.1.0.0.0  #
+#  0.1.1.0.0.1.0.1  #
+#  0.1.1.0.1.1.0.0  #
+#  0.1.1.1.0.0.0.0  #
+#                   #
+#===================# -EDI
 
 # Import everything needed
 from selenium import webdriver
@@ -20,15 +24,18 @@ from selenium.webdriver.common.by import By
 import time
 
 
-class SwimCloudScraper:
-    def __init__(self, delay=1.0, rand_delay_min=8, rand_delay_max=14):
+class SwimMeetScraper:
+    def __init__(self, delay=1.0, rand_delay_min=8, rand_delay_max=14, headless=False):
         """
         Initialize the scraper with a delay between requests.
 
         Args:
             delay: Seconds to wait between requests (default 1.0)
+            rand_delay_min: Minimum random delay between split parses
+            rand_delay_max: Maximum random delay between split parses
+            headless: Whether to run Selenium in headless mode (default False)
         """
-        self.base_url = "https://www.swimcloud.com"
+
         self.delay = delay
         self.rand_delay_min = rand_delay_min
         self.rand_delay_max = rand_delay_max
@@ -37,16 +44,31 @@ class SwimCloudScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         self.team_name = None
+        self.headless = headless
 
-        ## JN- changing selenium chrome to headless
-        self._init_selenium()
+        self._init_selenium(headless=headless)
 
-    def _init_selenium(self):
+    def _init_selenium(self, headless):
         """Initialize Selenium with headless Chrome. Disable if you want to see for debugging porpoises"""
         chrome_options = Options()
-        chrome_options.add_argument('--headless')
+        if headless:
+            # Add options to run Chrome in headless mode...hopefully this time
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            
+            # Add options to help with stability
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
+            print("Initializing the headless horseChrome...")
+        else:
+            print("Initializing Chrome *with head*...")
+
         self.driver = webdriver.Chrome(options=chrome_options)
-        print("Initializing headless Chrome for Selenium...")
 
     def find_all_available_sessions(self, url):
         """
@@ -61,8 +83,13 @@ class SwimCloudScraper:
         self.driver.get(url)
         time.sleep(self.delay)
 
-        # Find all links with .htm extension
+        # Not finding .htm links properly, testing stuff
+        # Debugging - this works!! Need to switch to frame first
+        # "It's working!" --Anakin, sometime
+        frame = self.driver.find_element(By.TAG_NAME, 'frame')
+        self.driver.switch_to.frame(frame)
         htm_links = self.driver.find_elements(By.XPATH, "//a[contains(@href, '.htm')]")
+        print(f"DEBUG: Found {len(htm_links)} .htm links inside frame")
 
         sessions = []
         for link in htm_links:
@@ -87,6 +114,8 @@ class SwimCloudScraper:
                 session_type = 'Finals'
             elif 'swim-off' in text_lower or 'swim off' in text_lower:
                 session_type = 'Swim-off'
+            else:
+                session_type = 'Relay Only'
 
             # Extract just the filename from href
             filename = href.split('/')[-1] if '/' in href else href
@@ -103,6 +132,7 @@ class SwimCloudScraper:
             })
 
         print(f"Found {len(sessions)} event sessions")
+        self.driver.switch_to.default_content()
         return sessions
 
     def _extract_meet_name(self, page_text):
@@ -156,12 +186,16 @@ class SwimCloudScraper:
         # Split into lines
         lines = page_text.split('\n')
 
-        # Find the start of results (after the header section)
+        # Find the start of results
+        # The number of ==='s changes by event, and happens twice- changed logic to find any === and take second one
         result_start = 0
+        second_separator_found = 0
         for i, line in enumerate(lines):
-            if '==================================================================================' in line:
-                result_start = i + 1
-                break
+            if line.startswith('========='):
+                if second_separator_found == 1:
+                    result_start = i + 1
+                    break
+                second_separator_found += 1
 
         # Parse each team result
         i = result_start
@@ -329,11 +363,15 @@ class SwimCloudScraper:
         lines = page_text.split('\n')
 
         # Find the start of results
+        # The number of ==='s changes by event, and happens twice- changed logic to find any === and take second one
         result_start = 0
+        second_separator_found = 0
         for i, line in enumerate(lines):
-            if '==================================================================================' in line:
-                result_start = i + 1
-                break
+            if line.startswith('========='):
+                if second_separator_found == 1:
+                    result_start = i + 1
+                    break
+                second_separator_found += 1
 
         # Parse each result
         i = result_start
@@ -518,25 +556,29 @@ class SwimCloudScraper:
 
 if __name__ == "__main__":
     # Initialize scraper
-    scraper = SwimCloudScraper(delay=1.0, rand_delay_min=8, rand_delay_max=14)
+    scraper = SwimMeetScraper(delay=1.0, # General delay b/w requests
+                               rand_delay_min=8, # Min random delay b/w split parses
+                               rand_delay_max=14, # Max random delay b/w split parses
+                               headless=False # Set to False to see browser window
+                               )
 
     try:
-        # Example: Parse a single event
-        event_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/250326lastevt.htm"
-        df = scraper.parse_event_page(event_url,
-                                      meet_name="2025 NCAA Division I Men's Swimming & Diving",
-                                      meet_url="https://swimmeetresults.tech/NCAA-Division-I-Men-2025/")
+        # # Example: Parse a single event
+        # event_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/250326P004.htm"
+        # df = scraper.parse_event_page(event_url,
+        #                               meet_name="2025 NCAA Division I Men's Swimming & Diving",
+        #                               meet_url="https://swimmeetresults.tech/NCAA-Division-I-Men-2025/")
 
-        print("\nResults preview:")
-        print(df.to_string())
+        # print("\nResults preview:")
+        # print(df.to_string())
 
-        # Save single event
-        df.to_excel('output_stuff\\single_event_results.xlsx', sheet_name='Event Results', index=False)
-        print("\nSaved to output_stuff\\single_event_results.xlsx")
+        # # Save single event
+        # df.to_excel('output_stuff\\single_event_results.xlsx', sheet_name='Event Results', index=False)
+        # print("\nSaved to output_stuff\\single_event_results.xlsx")
 
         # This should find all the meets that we can scrape. We will have to loop through it to scrape everything.
-        # index_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/index.htm"
-        # full_results = scraper.scrape_entire_meet(index_url, output_file='ncaa_meet_results.xlsx')
+        index_url = "https://swimmeetresults.tech/NCAA-Division-I-Men-2025/index.htm"
+        full_results = scraper.scrape_entire_meet(index_url, output_file='ncaa_meet_results.xlsx')
 
     finally:
         scraper.close()
